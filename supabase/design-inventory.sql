@@ -1,8 +1,9 @@
 -- ============================================================================
--- تصميم مقترح: المخزون باللوطات — مقروء لا مطبَّق
+-- المخزون باللوطات
 -- ============================================================================
 --
--- هذا الملف للمراجعة. ما يُشغَّل على القاعدة إلا بعد موافقة المالك.
+-- طُبِّق على قاعدة الإنتاج بموافقة المالك (هجرة inventory_lots_and_moves).
+-- يُقرأ هنا كمرجع للتصميم؛ ومصدر الحقيقة هو القاعدة.
 --
 -- القاعدة الحاكمة: الرصيد ما يُكتب، يُشتق. ما فيه عمود «الكمية المتبقية»
 -- يعدّله أحد — الرصيد مجموع الحركات. عمود رصيد يُكتب باليد يُفرَّغ المخزون
@@ -29,10 +30,33 @@ create type grn_verdict as enum ('ACCEPT', 'HOLD', 'REJECT');
 -- عشان يُقاس الفقد؛ فقدها الفعلي يُنزَّل بحركة WASTE مستقلة.
 create type stock_move_kind as enum ('RECEIPT', 'ISSUE', 'WASTE', 'ADJUST', 'THAW');
 
+-- وضع تخزين الشحنة. يحدد أي حدّ حرارة من حدود الجودة ينطبق عليها.
+create type storage_mode as enum ('CHILLED', 'FROZEN', 'AMBIENT');
+
 create type waste_reason as enum (
   'EXPIRED', 'DAMAGED', 'COLD_CHAIN', 'CONTAMINATION',
   'PREP_ERROR', 'SUPPLIER_RETURN', 'OTHER'
 );
+
+
+-- ---------- ربط حدود الاستلام بحدود الجودة ----------
+--
+-- الرقم يبقى في safety_critical_limits حيث تديره الجودة. ما ننسخه إلى
+-- ops_settings: رقمان لنفس الحدّ يفترقان أول ما يُعدَّل أحدهما، ويصير
+-- الاستلام يُحكم برقم والمراقبة برقم آخر.
+--
+-- وعمود receipt_mode وسم فقط: يقول أي صفّ من صفوف الجودة ينطبق على أي
+-- شحنة. والجودة تكتبه، والمالك كذلك — سياسة الجدول has_role(['quality'])
+-- و has_role تُمرّر التنفيذي دائماً، فتحكّم المالك قائم بلا استثناء جديد.
+alter table safety_critical_limits add column receipt_mode storage_mode;
+
+comment on column safety_critical_limits.receipt_mode is
+  'وسم: هذا الحدّ هو حدّ حرارة الاستلام لهذا الوضع. فارغ = ليس حدّ استلام.';
+
+update safety_critical_limits set receipt_mode = 'CHILLED'
+ where step_index = 1 and limit_kind = 'numeric' and parameter like '%المبردة%';
+update safety_critical_limits set receipt_mode = 'FROZEN'
+ where step_index = 1 and limit_kind = 'numeric' and parameter like '%المجمدة%';
 
 
 -- ============================================================================
@@ -62,6 +86,7 @@ create table ops_stock_lots (
   scale_qty_g       numeric(12,2) check (scale_qty_g > 0),   -- وزننا نحن
 
   -- شروط الاستلام
+  storage_mode      storage_mode not null default 'CHILLED',
   receipt_temp_c    numeric(5,2),
   packaging_ok      boolean not null default true,
   allergen_declared boolean not null default true,
@@ -208,6 +233,7 @@ declare
   s          jsonb;
   v_min_days int;
   v_wt_tol   numeric;
+  v_lim      record;
   v_reasons  text[] := '{}';
 begin
   select data into s from ops_settings where id = 1;
@@ -226,8 +252,36 @@ begin
     v_reasons := v_reasons || format('فرق وزن %s%%', round(abs(new.scale_qty_g - new.received_qty_g) / new.received_qty_g * 100, 1));
   end if;
 
-  if not new.packaging_ok      then v_reasons := v_reasons || 'تغليف غير سليم'; end if;
-  if not new.allergen_declared then v_reasons := v_reasons || 'إقرار المورد بمسببات الحساسية ناقص'; end if;
+  -- الحرارة: الحدّ من جدول الجودة، لا من رقم مكتوب هنا.
+  -- وشحنة مبردة أو مجمدة بلا قياس حرارة تُحجز: الاستلام بلا قياس ليس
+  -- استلاماً سليماً، والسكوت عنه يجعل الحقل اختيارياً عملياً.
+  if new.storage_mode in ('CHILLED', 'FROZEN') then
+    if new.receipt_temp_c is null then
+      v_reasons := v_reasons || 'حرارة الاستلام غير مقاسة'::text;
+    else
+      select max_value, min_value, parameter, unit into v_lim
+        from safety_critical_limits
+       where receipt_mode = new.storage_mode and active and limit_kind = 'numeric'
+       order by sort_order, id limit 1;
+
+      -- غياب الحدّ لا يُحجز: الجودة ما عرّفته بعد، وحجز كل شحنة لغياب
+      -- تعريف يوقف المطبخ على قرار لم يُتخذ.
+      if found then
+        if v_lim.max_value is not null and new.receipt_temp_c > v_lim.max_value then
+          v_reasons := v_reasons || format('%s %s%s > الحدّ %s', v_lim.parameter, new.receipt_temp_c, v_lim.unit, v_lim.max_value);
+        end if;
+        if v_lim.min_value is not null and new.receipt_temp_c < v_lim.min_value then
+          v_reasons := v_reasons || format('%s %s%s < الحدّ %s', v_lim.parameter, new.receipt_temp_c, v_lim.unit, v_lim.min_value);
+        end if;
+      end if;
+    end if;
+  end if;
+
+  -- ::text ضروري لا تزيين: نص حرفي بلا نوع يُقرأ unknown، فيحاول Postgres
+  -- حلّ || كضمّ مصفوفتين ويفشل بـ«malformed array literal». سطور format()
+  -- سليمة لأنها تُرجع text صراحةً.
+  if not new.packaging_ok      then v_reasons := v_reasons || 'تغليف غير سليم'::text; end if;
+  if not new.allergen_declared then v_reasons := v_reasons || 'إقرار المورد بمسببات الحساسية ناقص'::text; end if;
 
   if array_length(v_reasons, 1) is null then
     new.verdict := 'ACCEPT'; new.verdict_reason := '';
@@ -399,6 +453,13 @@ create policy "staff records moves" on ops_stock_moves
 create policy "staff counts" on ops_stocktakes
   for insert to authenticated with check (private.is_staff());
 
+-- إصلاح سابق لازم: سياسة «الجودة تكتب الحدود» موجودة من قبل، لكن
+-- authenticated ما عنده إلا SELECT على الجدول — فالسياسة كانت معطَّلة عملياً
+-- ولا الجودة ولا المالك يقدر يكتب. وتحكّم المالك المطلوب هنا يمرّ من نفس
+-- المنح. بلا delete: الجدول فيه active، والإلغاء إطفاء لا محو — كبقية النظام.
+grant insert, update on safety_critical_limits to authenticated;
+grant usage, select on sequence safety_critical_limits_id_seq to authenticated;
+
 grant select on ops_lot_balance_v, ops_stock_on_hand_v to authenticated;
 grant select, insert on ops_stock_lots  to authenticated;
 grant update (verdict, decided_by, decided_by_name, decided_at, decision_note) on ops_stock_lots to authenticated;
@@ -416,13 +477,9 @@ grant usage, select on sequence ops_stock_lots_id_seq, ops_stock_moves_id_seq, o
 --   expiryWarnDays             7      تنبيه اقتراب الانتهاء
 --   wasteApprovalLimitSar      200    فوقه يروح الهدر للمالك
 --
--- سؤال مفتوح — حدود الحرارة:
--- النظام عنده أصلاً حدود النقاط الحرجة صفوفاً تحددها الجودة (القسم 7.6).
--- وحرارة الاستلام هنا تحتاج حدّاً كذلك. وضعها في ops_settings يعني مصدرَي
--- حقيقة لنفس الرقم. الأنظف ربطها بصفوف الجودة — لكن هذا قرارك:
---   (أ) ربطها بحدود الجودة الموجودة، أو
---   (ب) رقم مستقل للاستلام في الإعدادات.
--- تركت المحفّز بلا فحص حرارة لين تختار، عشان ما أثبّت مصدراً ثانياً بالغلط.
+-- حدود الحرارة ليست هنا بقصد: مصدرها safety_critical_limits حيث تديره
+-- الجودة، ويقرؤه محفّز الاستلام عبر وسم receipt_mode. والمالك يكتب عليه
+-- كما تكتب الجودة (has_role تُمرّر التنفيذي)، ويفكّ حجز أي شحنة بقراره.
 
 
 -- ============================================================================
