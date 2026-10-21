@@ -59,6 +59,7 @@ export const OPS_MODULES: OpsModule[] = [
   { href: "/admin/ops/rotation", label: "جدول الدوران", view: "rotation.view", edit: "rotation.edit", desc: "أصناف كل يوم خلال 14 يوم", stage: "run", roles: ["kitchen"] },
   { href: "/admin/ops/production", label: "الإنتاج والمشتريات", view: "production.view", edit: "production.edit", desc: "حصص اليوم وقائمة الشراء", stage: "run", roles: ["kitchen", "finance"] },
   { href: "/admin/ops/kitchen-card", label: "بطاقة المطبخ", view: "card.view", desc: "أوزان الدفعة وطريقة التحضير", stage: "run", roles: ["kitchen", "quality"] },
+  { href: "/admin/ops/inventory", label: "المخزون", view: "inventory.view", edit: "inventory.receive", desc: "الاستلام واللوطات والصرف والهدر", stage: "run", roles: ALL },
   { href: "/admin/safety/ccp", label: "سجل المراقبة", view: "safety.view", edit: "safety.log", desc: "قراءات النقاط الحرجة اليومية", stage: "run", roles: ["kitchen", "quality"] },
 
   // ٥ · المخرجات — اللي يطلع من كل اللي فوق

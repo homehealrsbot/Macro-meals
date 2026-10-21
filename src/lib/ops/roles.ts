@@ -66,6 +66,10 @@ export type Cap =
   | "quality.editGates"
   | "quality.editPriceGate"
   | "quality.editShelfLife"
+  | "inventory.view"
+  | "inventory.receive"
+  | "inventory.issue"
+  | "inventory.decide"
   | "yield.spec"
   | "yield.check"
   | "gateDefs.manage"
@@ -127,6 +131,13 @@ export const MATRIX: Record<Cap, Role[]> = {
   "quality.editShelfLife": ["quality"],
   // مرجع الـyield للمالك وحده: هو الرقم الذي يُقاس عليه المطبخ، فلو ملكه
   // المطبخ قاس نفسه على رقمٍ يملك تغييره وصارت المطابقة بلا معنى.
+  // المخزون: الاستلام والصرف للمطبخ (هو من يدخل المكوّنات)، والقرار على
+  // المحجوز والهدر الكبير للمالك. والرؤية للكل: إخفاء المخزون عن الجودة
+  // يعني مراجعة عمياء، وعن المالية يعني تقييماً بلا أرقام.
+  "inventory.view": ALL,
+  "inventory.receive": ["kitchen"],
+  "inventory.issue": ["kitchen"],
+  "inventory.decide": ["executive"],
   "yield.spec": ["executive"],
   "yield.check": ["kitchen", "quality"],
   "gateDefs.manage": ["executive"],
@@ -281,6 +292,7 @@ export const ROUTE_CAPS: { prefix: string; cap: Cap }[] = [
   { prefix: "/admin/ops/kitchen-gate", cap: "quality.view" },
   { prefix: "/admin/ops/quality", cap: "quality.view" },
   { prefix: "/admin/ops/pilot", cap: "quality.view" },
+  { prefix: "/admin/ops/inventory", cap: "inventory.view" },
   { prefix: "/admin/ops", cap: "ops.view" },
   { prefix: "/admin/team", cap: "team.manage" },
   { prefix: "/admin/safety", cap: "safety.view" },
