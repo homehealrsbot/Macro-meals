@@ -9,6 +9,7 @@
 --   inventory_04_rls_and_grants           السياسات والمنح
 --   inventory_06_waste_owner_approval     اعتماد الهدر من المالك
 --   inventory_07_auto_receipt_move        حركة الاستلام تُولَد في القاعدة
+--   inventory_08_invoice_price_finance_only  سعر الفاتورة للمالي، والتقييم منه
 --
 -- وآخر هجرتين ليستا في هذا الملف: راجعهما في سجل الهجرات. والواجهة في
 -- src/app/admin/ops/inventory/.
@@ -508,3 +509,143 @@ grant usage, select on sequence ops_stock_lots_id_seq, ops_stock_moves_id_seq, o
 --   ما يُعدَّل أحدهما، فيصير مخزون مكوّنٍ ما له وصفة.
 --
 -- • عمود رصيد على اللوط: لا. مشتقّ من الدفتر (القسم 6).
+-- ============================================================================
+-- تسعير الشحنات — سعر الفاتورة للمالي وحده
+-- ============================================================================
+--
+-- رقمان وظيفتهما مختلفة، وكان النظام يخلطهما:
+--
+--   ops_ingredients.price    سعر التكلفة المعياري — تُسعَّر به الوصفات.
+--                            يملكه المالي، ويبقى ثابتاً حتى يقرر تغييره.
+--
+--   invoice_price_sar        ما دُفع فعلاً في هذي الشحنة. واقعة من فاتورة،
+--                            تخصّ لوطاً واحداً ولا تمسّ تسعير أي وصفة.
+--
+-- وكانت قيمة المخزون تُحسب من السعر المعياري اليوم، فتتغيّر قيمة بضاعة
+-- اشتُريت قبل شهر كلما عدّل المالي السعر. الآن تُحسب من سعر فاتورتها.
+--
+-- والإدخال للمالي وحده، بمحفّز لا بـGRANT: كل المستخدمين يتصلون بدور
+-- postgres واحد هو authenticated، فالمنح على العمود ينطبق عليهم بالتساوي.
+-- الدور الفعلي ما يُعرف إلا وقت التنفيذ من جدول staff — نفس سبب وجود
+-- trg_ingredient_column_roles على ops_ingredients.
+
+alter table ops_stock_lots
+  add column invoice_price_sar numeric(10,2) check (invoice_price_sar >= 0),
+  add column invoice_no        text not null default '',
+  add column priced_by         uuid references auth.users(id),
+  add column priced_by_name    text not null default '',
+  add column priced_at         timestamptz,
+  -- يحسبه المحفّز: كم يبعد سعر الفاتورة عن المعياري. تنبيهٌ للمالي أن
+  -- السعر تحرّك، لا منعٌ — الفاتورة واقعة، والمعياري قرارٌ يراجعه.
+  add column price_variance_pct numeric(7,4);
+
+comment on column ops_stock_lots.invoice_price_sar is
+  'ر.س/كجم من فاتورة المورد. للمالي وحده. فارغ = الشحنة لم تُسعَّر بعد.';
+comment on column ops_stock_lots.unit_price_snap is
+  'لقطة السعر المعياري وقت الاستلام — للمقارنة. التقييم من invoice_price_sar.';
+
+
+-- ---------- السعر للمالي وحده ----------
+create or replace function private.tg_lot_price_role() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  r staff_role := private.current_staff_role();
+  v_std numeric;
+  v_warn numeric;
+begin
+  if (new.invoice_price_sar, new.invoice_no)
+       is distinct from (old.invoice_price_sar, old.invoice_no)
+     and r not in ('finance', 'executive') then
+    raise exception 'إدخال سعر الفاتورة من صلاحية الإدارة المالية';
+  end if;
+
+  -- وقرار الشحنة للمالك وحده. الحراسة هنا لا في السياسة لأن سياسات RLS
+  -- تُجمع بـOR: سياسة المالي للتسعير تعطيه الصفّ، ومنح عمود verdict عام،
+  -- فبلا هذا الفحص يفكّ المالي حجز شحنة وهو لا يملك القرار.
+  if (new.verdict, new.decided_by, new.decided_at, new.decision_note)
+       is distinct from (old.verdict, old.decided_by, old.decided_at, old.decision_note)
+     and r <> 'executive' then
+    raise exception 'قبول الشحنة المحجوزة أو رفضها من صلاحية المالك';
+  end if;
+
+  -- بصمة من سعّر، تُكتب هنا لا من الواجهة: التوقيع على رقم مالي ما يُترك
+  -- لمرسِل الطلب يملأه بما يشاء.
+  if new.invoice_price_sar is distinct from old.invoice_price_sar
+     and new.invoice_price_sar is not null then
+    new.priced_by      := auth.uid();
+    new.priced_by_name := coalesce((select name from staff where user_id = auth.uid()), '');
+    new.priced_at      := now();
+
+    -- الانحراف عن المعياري. غياب المفتاح يعني ١٠٪ لا انحرافاً مفتوحاً.
+    select coalesce(unit_price_snap, 0) into v_std from ops_stock_lots where id = new.id;
+    select coalesce((data->>'priceVarianceWarnPct')::numeric, 0.10)
+      into v_warn from ops_settings where id = 1;
+    v_warn := coalesce(v_warn, 0.10);
+
+    if v_std > 0 then
+      new.price_variance_pct := round((new.invoice_price_sar - v_std) / v_std, 4);
+    else
+      new.price_variance_pct := null;
+    end if;
+  end if;
+
+  return new;
+end $$;
+
+create trigger lot_price_role before update on ops_stock_lots
+  for each row execute function private.tg_lot_price_role();
+
+
+-- ---------- المالي يكتب على الأعمدة المالية ----------
+-- السياسة القديمة كانت للمالك على المحجوز وحده، فالمالي ما يقدر يسعّر.
+create policy "finance prices lots" on ops_stock_lots
+  for update to authenticated
+  using (private.has_role(array['finance']::staff_role[]))
+  with check (private.has_role(array['finance']::staff_role[]));
+
+grant update (invoice_price_sar, invoice_no) on ops_stock_lots to authenticated;
+
+
+-- ---------- التقييم من سعر الفاتورة ----------
+-- coalesce: الفعلي إن وُجد، وإلا المعياري وقت الاستلام. وصفر لو ما فيه
+-- الاثنان — ما نخترع رقماً لبضاعة بلا تكلفة معروفة.
+-- إسقاط وإعادة بناء: create or replace ما يسمح بإدراج عمود في وسط قائمة
+-- أعمدة عرض قائم. والتابع يُسقط أولاً. والاثنان في معاملة الهجرة الواحدة،
+-- فما فيه لحظة يكون فيها العرض غائباً عن التطبيق.
+drop view if exists ops_stock_on_hand_v;
+drop view if exists ops_lot_balance_v;
+
+create view ops_lot_balance_v as
+select
+  l.id                                       as lot_id,
+  l.ingredient_key,
+  l.expiry_date,
+  l.verdict,
+  coalesce(l.invoice_price_sar, l.unit_price_snap, 0) as cost_per_kg,
+  (l.invoice_price_sar is null)              as unpriced,
+  coalesce(sum(m.qty_g), 0)                  as balance_g,
+  round(coalesce(sum(m.qty_g), 0) / 1000 * coalesce(l.invoice_price_sar, l.unit_price_snap, 0), 2) as value_sar,
+  (l.verdict = 'ACCEPT'
+   and l.expiry_date >= current_date
+   and coalesce(sum(m.qty_g), 0) > 0)        as issuable
+from ops_stock_lots l
+left join ops_stock_moves m on m.lot_id = l.id
+group by l.id;
+
+create view ops_stock_on_hand_v as
+select
+  i.key                                      as ingredient_key,
+  i.name,
+  i.reorder_point_g,
+  i.price                                    as standard_price_sar,
+  coalesce(sum(b.balance_g) filter (where b.issuable), 0) as usable_g,
+  coalesce(sum(b.balance_g), 0)                           as total_g,
+  min(b.expiry_date) filter (where b.issuable)            as nearest_expiry,
+  -- القيمة من تكلفة كل لوط لا من سعر اليوم
+  round(coalesce(sum(b.value_sar) filter (where b.issuable), 0), 2) as value_sar,
+  count(*) filter (where b.unpriced and b.balance_g > 0)  as unpriced_lots,
+  coalesce(sum(b.balance_g) filter (where b.issuable), 0) < i.reorder_point_g as below_reorder
+from ops_ingredients i
+left join ops_lot_balance_v b on b.ingredient_key = i.key
+where i.active
+group by i.key, i.name, i.reorder_point_g, i.price;

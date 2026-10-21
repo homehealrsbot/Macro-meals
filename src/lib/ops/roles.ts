@@ -70,6 +70,7 @@ export type Cap =
   | "inventory.receive"
   | "inventory.issue"
   | "inventory.decide"
+  | "inventory.price"
   | "yield.spec"
   | "yield.check"
   | "gateDefs.manage"
@@ -138,6 +139,8 @@ export const MATRIX: Record<Cap, Role[]> = {
   "inventory.receive": ["kitchen"],
   "inventory.issue": ["kitchen"],
   "inventory.decide": ["executive"],
+  // سعر الفاتورة للمالي: واقعة من مستند، والمالي يملك كل رقم مالي.
+  "inventory.price": ["finance"],
   "yield.spec": ["executive"],
   "yield.check": ["kitchen", "quality"],
   "gateDefs.manage": ["executive"],

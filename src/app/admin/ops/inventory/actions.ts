@@ -244,3 +244,31 @@ export async function recordStocktake(input: {
   await writeAudit(ctx, `جرد لوط #${input.lotId} · عُدَّ ${input.countedG}غ`);
   return done();
 }
+
+// ---------- تسعير الشحنة — المالي ----------
+
+export async function priceLot(input: {
+  lotId: number;
+  invoicePriceSar: number;
+  invoiceNo: string;
+}): Promise<ActionResult & { variance?: number | null }> {
+  const ctx = await guard("inventory.price");
+  if (isDenial(ctx)) return ctx;
+
+  if (!(input.invoicePriceSar >= 0)) return { ok: false, error: "السعر ما يكون سالباً" };
+
+  // الانحراف وبصمة المسعِّر يكتبهما محفّز lot_price_role — ما نرسلهما:
+  // التوقيع على رقم مالي ما يُترك لمرسِل الطلب يملأه بما يشاء.
+  const { data, error } = await ctx.supabase
+    .from("ops_stock_lots")
+    .update({ invoice_price_sar: input.invoicePriceSar, invoice_no: input.invoiceNo.trim() })
+    .eq("id", input.lotId)
+    .select("price_variance_pct")
+    .maybeSingle();
+  if (error) return dbError(error.message);
+  if (!data) return { ok: false, error: "الشحنة غير موجودة أو خارج صلاحيتك" };
+
+  await writeAudit(ctx, `تسعير لوط #${input.lotId} بـ${input.invoicePriceSar} ر.س/كجم`);
+  revalidatePath(PATH);
+  return { ok: true, variance: data.price_variance_pct === null ? null : Number(data.price_variance_pct) };
+}

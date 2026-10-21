@@ -44,6 +44,8 @@ export interface StockRow {
   totalG: number;
   nearestExpiry: string | null;
   valueSar: number;
+  standardPriceSar: number;
+  unpricedLots: number;
   reorderPointG: number;
   belowReorder: boolean;
 }
@@ -60,7 +62,14 @@ export interface LotRow {
   receiptTempC: number | null;
   verdict: GrnVerdict;
   verdictReason: string;
-  unitPriceSnap: number;
+  unitPriceSnap: number;        // السعر المعياري وقت الاستلام — للمقارنة
+  invoicePriceSar: number | null; // سعر الفاتورة الفعلي — للمالي وحده
+  invoiceNo: string;
+  pricedByName: string;
+  priceVariancePct: number | null;
+  costPerKg: number;
+  unpriced: boolean;
+  valueSar: number;
   balanceG: number;
   issuable: boolean;
   receivedByName: string;
@@ -105,4 +114,5 @@ export interface InventorySnapshot {
   ingredients: { key: string; name: string; price: number }[];
   wasteLimitSar: number;
   expiryWarnDays: number;
+  priceVarianceWarnPct: number;
 }

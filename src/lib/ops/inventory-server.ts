@@ -26,7 +26,7 @@ export async function loadInventory(): Promise<InventorySnapshot> {
     db.from("ops_settings").select("data").eq("id", 1).maybeSingle(),
   ]);
 
-  const balById = new Map<number, { balance_g: unknown; issuable: unknown }>();
+  const balById = new Map<number, Record<string, unknown>>();
   for (const b of balQ.data ?? []) balById.set(Number(b.lot_id), b);
 
   const nameByKey = new Map<string, string>();
@@ -42,6 +42,8 @@ export async function loadInventory(): Promise<InventorySnapshot> {
       totalG: n(r.total_g),
       nearestExpiry: r.nearest_expiry ? s(r.nearest_expiry) : null,
       valueSar: n(r.value_sar),
+      standardPriceSar: n(r.standard_price_sar),
+      unpricedLots: n(r.unpriced_lots),
       reorderPointG: n(r.reorder_point_g),
       belowReorder: r.below_reorder === true,
     })),
@@ -60,6 +62,13 @@ export async function loadInventory(): Promise<InventorySnapshot> {
         verdict: s(r.verdict) as GrnVerdict,
         verdictReason: s(r.verdict_reason),
         unitPriceSnap: n(r.unit_price_snap),
+        invoicePriceSar: r.invoice_price_sar === null ? null : n(r.invoice_price_sar),
+        invoiceNo: s(r.invoice_no),
+        pricedByName: s(r.priced_by_name),
+        priceVariancePct: r.price_variance_pct === null ? null : n(r.price_variance_pct),
+        costPerKg: n(b?.cost_per_kg),
+        unpriced: b?.unpriced === true,
+        valueSar: n(b?.value_sar),
         balanceG: n(b?.balance_g),
         issuable: b?.issuable === true,
         receivedByName: s(r.received_by_name),
@@ -97,5 +106,6 @@ export async function loadInventory(): Promise<InventorySnapshot> {
     ingredients: (ingQ.data ?? []).map((i) => ({ key: s(i.key), name: s(i.name), price: n(i.price) })),
     wasteLimitSar: Number(settings.wasteApprovalLimitSar ?? 200),
     expiryWarnDays: Number(settings.expiryWarnDays ?? 7),
+    priceVarianceWarnPct: Number(settings.priceVarianceWarnPct ?? 0.10),
   };
 }
