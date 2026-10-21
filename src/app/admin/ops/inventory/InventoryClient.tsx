@@ -15,20 +15,21 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import {
   PackagePlus, Boxes, ArrowDownToLine, Trash2, ShieldCheck,
   AlertTriangle, CheckCircle2, XCircle, Thermometer, CalendarClock, Receipt,
+  History, ArrowRight,
 } from "lucide-react";
 import { can } from "@/lib/ops/roles";
 import { useSession } from "@/lib/ops/session";
 import {
-  STORAGE_LABEL, WASTE_REASON_LABEL,
-  type InventorySnapshot, type LotRow, type StorageMode, type WasteReason,
+  STORAGE_LABEL, VERDICT_LABEL, WASTE_REASON_LABEL, MOVES_LIMIT, buildLotStories,
+  type InventorySnapshot, type LotEvent, type LotRow, type StorageMode, type WasteReason,
 } from "@/lib/ops/inventory";
 import {
   AccessNote, Card, CardTitle, ErrorNote, Kpi, NumInput, OpsShell,
-  Pill, T, Td, Th, TableWrap, num, pct, sar,
+  Pill, T, Td, Th, TableWrap, num, pct, sar, stamp,
 } from "@/components/ops/ui";
 import * as actions from "./actions";
 
-type Tab = "stock" | "receive" | "issue" | "price" | "decide";
+type Tab = "stock" | "moves" | "receive" | "issue" | "price" | "decide";
 
 export default function InventoryClient({ snap }: { snap: InventorySnapshot }) {
   const session = useSession();
@@ -48,6 +49,7 @@ export default function InventoryClient({ snap }: { snap: InventorySnapshot }) {
 
   const tabs: { key: Tab; label: string; show: boolean; badge?: number }[] = [
     { key: "stock", label: "الرصيد", show: true },
+    { key: "moves", label: "حركة الشحنات", show: true },
     { key: "receive", label: "استلام", show: canReceive },
     { key: "issue", label: "صرف وهدر", show: canIssue },
     { key: "price", label: "تسعير الفواتير", show: canPrice, badge: unpricedLots.length },
@@ -59,6 +61,14 @@ export default function InventoryClient({ snap }: { snap: InventorySnapshot }) {
     : canPrice && unpricedLots.length > 0 ? "price"
     : "stock",
   );
+
+  // الشحنة المختارة من شاشة الرصيد: الضغط على «الحركة» في سطر اللوط ينقل
+  // إلى تبويب الحركة وهو مفتوح عليها، لا على كل الشحنات.
+  const [focusLot, setFocusLot] = useState<number | null>(null);
+  function showMoves(lotId: number) {
+    setFocusLot(lotId);
+    setTab("moves");
+  }
 
   const expiringSoon = useMemo(() => {
     const limit = new Date();
@@ -91,14 +101,19 @@ export default function InventoryClient({ snap }: { snap: InventorySnapshot }) {
 
       <div className="flex gap-2 flex-wrap mb-4 print:hidden">
         {visible.map((t) => (
-          <Pill key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
+          <Pill
+            key={t.key}
+            active={tab === t.key}
+            onClick={() => { if (t.key === "moves") setFocusLot(null); setTab(t.key); }}
+          >
             {t.label}
             {t.badge ? ` · ${t.badge}` : ""}
           </Pill>
         ))}
       </div>
 
-      {tab === "stock" && <StockTab snap={snap} />}
+      {tab === "stock" && <StockTab snap={snap} onShowMoves={showMoves} />}
+      {tab === "moves" && <MovesTab snap={snap} focus={focusLot} onFocus={setFocusLot} />}
       {tab === "receive" && canReceive && <ReceiveTab snap={snap} />}
       {tab === "issue" && canIssue && <IssueTab snap={snap} />}
       {tab === "price" && canPrice && <PriceTab snap={snap} unpriced={unpricedLots} />}
@@ -109,7 +124,7 @@ export default function InventoryClient({ snap }: { snap: InventorySnapshot }) {
 
 // ============================================================ الرصيد
 
-function StockTab({ snap }: { snap: InventorySnapshot }) {
+function StockTab({ snap, onShowMoves }: { snap: InventorySnapshot; onShowMoves: (lotId: number) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const withStock = snap.stock.filter((r) => r.totalG > 0 || r.reorderPointG > 0);
 
@@ -130,12 +145,12 @@ function StockTab({ snap }: { snap: InventorySnapshot }) {
         <thead>
           <tr>
             <Th>المكوّن</Th>
-            <Th className="text-center">المتاح</Th>
-            <Th className="text-center">الإجمالي</Th>
-            <Th className="text-center">أقرب انتهاء</Th>
-            <Th className="text-center">القيمة</Th>
-            <Th className="text-center">بلا فاتورة</Th>
-            <Th className="text-center">نقطة الطلب</Th>
+            <Th align="num">المتاح (غ)</Th>
+            <Th align="num">الإجمالي (غ)</Th>
+            <Th align="num">أقرب انتهاء</Th>
+            <Th align="num">القيمة (ر.س)</Th>
+            <Th align="center">بلا فاتورة</Th>
+            <Th align="num">نقطة الطلب (غ)</Th>
           </tr>
         </thead>
         <tbody>
@@ -150,24 +165,24 @@ function StockTab({ snap }: { snap: InventorySnapshot }) {
                   style={{ background: isOpen ? T.brandTint : undefined }}
                 >
                   <Td strong>{r.name}</Td>
-                  <Td className="text-center num">{num(r.usableG)} غ</Td>
-                  <Td className="text-center num">{num(r.totalG)} غ</Td>
-                  <Td className="text-center num">{r.nearestExpiry ?? "—"}</Td>
-                  <Td className="text-center num">{sar(r.valueSar)}</Td>
-                  <Td className="text-center">
+                  <Td align="num">{num(r.usableG)}</Td>
+                  <Td align="num">{num(r.totalG)}</Td>
+                  <Td align="num">{r.nearestExpiry ?? "—"}</Td>
+                  <Td align="num">{num(r.valueSar, 2)}</Td>
+                  <Td align="center">
                     {r.unpricedLots > 0 ? (
                       <span className="num text-[11px] font-bold rounded-full px-2 py-0.5" style={{ background: T.brandTint, color: T.brand }}>
                         {num(r.unpricedLots)}
                       </span>
                     ) : "—"}
                   </Td>
-                  <Td className="text-center">
+                  <Td align="num">
                     {r.reorderPointG > 0 ? (
                       <span
                         className="num text-[11px] font-bold rounded-full px-2 py-0.5"
                         style={r.belowReorder ? { background: T.warnTint, color: T.warn } : undefined}
                       >
-                        {num(r.reorderPointG)} غ
+                        {num(r.reorderPointG)}
                       </span>
                     ) : "—"}
                   </Td>
@@ -184,7 +199,7 @@ function StockTab({ snap }: { snap: InventorySnapshot }) {
                         ) : (
                           <div className="flex flex-col gap-1.5">
                             {[...lots].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate)).map((l) => (
-                              <LotLine key={l.id} lot={l} />
+                              <LotLine key={l.id} lot={l} onShowMoves={onShowMoves} />
                             ))}
                           </div>
                         )}
@@ -201,7 +216,7 @@ function StockTab({ snap }: { snap: InventorySnapshot }) {
   );
 }
 
-function LotLine({ lot }: { lot: LotRow }) {
+function LotLine({ lot, onShowMoves }: { lot: LotRow; onShowMoves: (lotId: number) => void }) {
   return (
     <div
       className="flex items-center gap-3 flex-wrap rounded-lg px-3 py-2 text-xs"
@@ -229,7 +244,188 @@ function LotLine({ lot }: { lot: LotRow }) {
           غير قابل للصرف
         </span>
       )}
+      <button
+        onClick={(e) => { e.stopPropagation(); onShowMoves(lot.id); }}
+        className="mr-auto shrink-0 inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold"
+        style={{ background: T.brandTint, color: T.brand }}
+      >
+        <History size={12} /> الحركة
+      </button>
     </div>
+  );
+}
+
+// ============================================================ حركة الشحنات
+
+/**
+ * سرد كل شحنة: إيش صار لها ومين سوّاه ومتى ولأي سبب، والرصيد بعد كل حدث.
+ *
+ * السرد يُبنى في buildLotStories لأن الدفتر وحده ما يحكي القصة: الحجز ورفض
+ * الشحنة ورفض الإعدام أحكامٌ بلا حركة في الدفتر. والعرض هنا يعرض فقط.
+ */
+function MovesTab({
+  snap, focus, onFocus,
+}: {
+  snap: InventorySnapshot;
+  focus: number | null;
+  onFocus: (lotId: number | null) => void;
+}) {
+  const [key, setKey] = useState("");
+  const [q, setQ] = useState("");
+  const stories = useMemo(() => buildLotStories(snap), [snap]);
+
+  const shown = useMemo(() => {
+    if (focus !== null) return stories.filter((st) => st.lot.id === focus);
+    const needle = q.trim().toLowerCase();
+    return stories.filter((st) => {
+      if (key && st.lot.ingredientKey !== key) return false;
+      if (!needle) return true;
+      return (
+        String(st.lot.id).includes(needle)
+        || st.lot.supplier.toLowerCase().includes(needle)
+        || st.lot.supplierLot.toLowerCase().includes(needle)
+        || st.events.some((e) => e.detail.toLowerCase().includes(needle))
+      );
+    });
+  }, [stories, focus, key, q]);
+
+  const capped = shown.slice(0, 20);
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card>
+        <div className="p-4 flex items-end gap-3 flex-wrap">
+          {focus !== null ? (
+            <button
+              onClick={() => onFocus(null)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold"
+              style={{ background: T.brandTint, color: T.brand }}
+            >
+              <ArrowRight size={13} /> كل الشحنات
+            </button>
+          ) : (
+            <>
+              <Field label="المكوّن">
+                <select
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  className="rounded-lg border px-2 py-2 text-sm"
+                  style={{ borderColor: T.border, background: "#FFFDF5", color: T.ink, minWidth: 180 }}
+                >
+                  <option value="">كل المكوّنات</option>
+                  {snap.ingredients.map((i) => (
+                    <option key={i.key} value={i.key}>{i.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="بحث — رقم الشحنة أو المورد أو لوطه">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  className="rounded-lg border px-2 py-2 text-sm"
+                  style={{ borderColor: T.border, background: "#FFFDF5", color: T.ink, width: 240 }}
+                />
+              </Field>
+            </>
+          )}
+          <span className="text-[11px] mb-2.5" style={{ color: T.inkSoft }}>
+            {shown.length > capped.length
+              ? `${num(capped.length)} من ${num(shown.length)} شحنة — ضيّق البحث`
+              : `${num(shown.length)} شحنة`}
+          </span>
+        </div>
+      </Card>
+
+      {snap.moves.length >= MOVES_LIMIT && (
+        <div className="text-[11px] px-1" style={{ color: T.inkSoft }}>
+          السرد من آخر {num(MOVES_LIMIT)} حركة في الدفتر — الأقدم منها غير معروض.
+        </div>
+      )}
+
+      {capped.length === 0 ? (
+        <Card>
+          <div className="p-8 text-center text-sm" style={{ color: T.inkSoft }}>
+            ما فيه شحنات مطابقة.
+          </div>
+        </Card>
+      ) : capped.map((st) => <LotStoryCard key={st.lot.id} story={st} />)}
+    </div>
+  );
+}
+
+function LotStoryCard({ story }: { story: ReturnType<typeof buildLotStories>[number] }) {
+  const l = story.lot;
+  const verdictTone = l.verdict === "ACCEPT" ? { bg: T.goodTint, fg: T.good }
+    : l.verdict === "HOLD" ? { bg: T.warnTint, fg: T.warn }
+    : { bg: "#F3EFEC", fg: T.inkSoft };
+
+  return (
+    <Card>
+      <CardTitle
+        icon={<History size={16} />}
+        aside={
+          <span className="num text-[11px] font-bold" style={{ color: T.inkSoft }}>
+            الرصيد الآن {num(l.balanceG)} غ
+          </span>
+        }
+      >
+        <span className="flex items-center gap-2 flex-wrap">
+          <span className="num">شحنة #{l.id}</span>
+          <span>{l.ingredientName}</span>
+          <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ background: verdictTone.bg, color: verdictTone.fg }}>
+            {VERDICT_LABEL[l.verdict]}
+          </span>
+        </span>
+      </CardTitle>
+
+      <div className="px-1 pb-3 text-[11px] flex items-center gap-x-3 gap-y-1 flex-wrap" style={{ color: T.inkSoft }}>
+        {l.supplier && <span>{l.supplier}</span>}
+        {l.supplierLot && <span className="num">لوط المورد {l.supplierLot}</span>}
+        <span className="num">ينتهي {l.expiryDate}</span>
+        <span>{STORAGE_LABEL[l.storageMode]}</span>
+        {l.receiptTempC !== null && <span className="num">حرارة الاستلام {l.receiptTempC}°م</span>}
+        <span className="num">استُلمت {num(l.receivedQtyG)} غ</span>
+      </div>
+
+      <TableWrap minWidth={620}>
+        <thead>
+          <tr>
+            <Th align="num">متى</Th>
+            <Th>الحدث</Th>
+            <Th align="num">الكمية (غ)</Th>
+            <Th align="num">الرصيد بعدها (غ)</Th>
+            <Th>مين</Th>
+            <Th>التفصيل</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {story.events.map((e) => <EventRow key={e.key} e={e} />)}
+        </tbody>
+      </TableWrap>
+    </Card>
+  );
+}
+
+function EventRow({ e }: { e: LotEvent }) {
+  const color = e.tone === "in" ? T.good : e.tone === "out" ? T.warn : T.inkSoft;
+  return (
+    <tr style={{ borderTop: `1px solid ${T.border}` }}>
+      <Td align="num" className="whitespace-nowrap">{stamp(e.at)}</Td>
+      <Td strong>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block rounded-full shrink-0" style={{ width: 6, height: 6, background: color }} />
+          {e.title}
+        </span>
+      </Td>
+      <Td align="num">
+        {e.qtyG === null
+          ? <span style={{ color: T.inkSoft }}>—</span>
+          : <span style={{ color }}>{e.qtyG > 0 ? "+" : "−"}{num(Math.abs(e.qtyG))}</span>}
+      </Td>
+      <Td align="num">{e.balanceG === null ? "—" : num(e.balanceG)}</Td>
+      <Td>{e.by || "—"}</Td>
+      <Td>{e.detail || "—"}</Td>
+    </tr>
   );
 }
 
@@ -542,23 +738,23 @@ function PriceTab({ snap, unpriced }: { snap: InventorySnapshot; unpriced: LotRo
           <TableWrap minWidth={700}>
             <thead>
               <tr>
-                <Th>اللوط</Th>
+                <Th align="num">الشحنة</Th>
                 <Th>المكوّن</Th>
-                <Th className="text-center">الفاتورة</Th>
-                <Th className="text-center">ر.س/كجم</Th>
-                <Th className="text-center">عن المعياري</Th>
-                <Th className="text-center">سعّرها</Th>
+                <Th align="num">رقم الفاتورة</Th>
+                <Th align="num">ر.س/كجم</Th>
+                <Th align="center">عن المعياري</Th>
+                <Th>سعّرها</Th>
               </tr>
             </thead>
             <tbody>
               {priced.map((l) => (
                 <tr key={l.id}>
-                  <Td strong><span className="num">#{l.id}</span></Td>
+                  <Td align="num" strong>#{l.id}</Td>
                   <Td>{l.ingredientName}</Td>
-                  <Td className="text-center num">{l.invoiceNo || "—"}</Td>
-                  <Td className="text-center num">{sar(l.invoicePriceSar ?? 0)}</Td>
-                  <Td className="text-center"><Variance pct={l.priceVariancePct} warnPct={snap.priceVarianceWarnPct} /></Td>
-                  <Td className="text-center">{l.pricedByName || "—"}</Td>
+                  <Td align="num">{l.invoiceNo || "—"}</Td>
+                  <Td align="num">{num(l.invoicePriceSar ?? 0, 2)}</Td>
+                  <Td align="center"><Variance pct={l.priceVariancePct} warnPct={snap.priceVarianceWarnPct} /></Td>
+                  <Td>{l.pricedByName || "—"}</Td>
                 </tr>
               ))}
             </tbody>

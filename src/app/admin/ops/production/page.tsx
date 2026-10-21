@@ -159,7 +159,7 @@ export default function ProductionPage() {
           <thead>
             <tr>
               <Th>الصنف</Th>
-              <Th className="text-center">حصص مخططة</Th>
+              <Th align="center">حصص مخططة</Th>
               {showFinance && <Th>السعر</Th>}
               {showFinance && <Th>إيراد صافٍ</Th>}
               {showFinance && <Th>تكلفة/حصة</Th>}

@@ -65,7 +65,7 @@ export default function EngineeringPage() {
                   <Th>السعر</Th>
                   <Th>التكلفة الكلية</Th>
                   <Th>هامش/طبق</Th>
-                  <Th className="text-center">وحدات مباعة</Th>
+                  <Th align="center">وحدات مباعة</Th>
                   <Th>حصة المبيعات</Th>
                   <Th>التصنيف</Th>
                   <Th>الإجراء المقترح</Th>

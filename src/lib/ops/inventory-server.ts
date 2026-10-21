@@ -4,6 +4,7 @@
 // @/lib/supabase/server من ملف يصل المتصفّح يجرّ next/headers معه.
 
 import { createClient } from "@/lib/supabase/server";
+import { MOVES_LIMIT } from "./inventory";
 import type { InventorySnapshot, GrnVerdict, StorageMode, WasteReason, WasteStatus } from "./inventory";
 
 const n = (v: unknown) => Number(v ?? 0);
@@ -20,7 +21,7 @@ export async function loadInventory(): Promise<InventorySnapshot> {
     db.from("ops_stock_on_hand_v").select("*"),
     db.from("ops_stock_lots").select("*").order("id", { ascending: false }),
     db.from("ops_lot_balance_v").select("*"),
-    db.from("ops_stock_moves").select("*").order("id", { ascending: false }).limit(500),
+    db.from("ops_stock_moves").select("*").order("id", { ascending: false }).limit(MOVES_LIMIT),
     db.from("ops_waste_requests").select("*").order("id", { ascending: false }).limit(200),
     db.from("ops_ingredients").select("key,name,price").neq("active", false).order("name"),
     db.from("ops_settings").select("data").eq("id", 1).maybeSingle(),
@@ -73,6 +74,10 @@ export async function loadInventory(): Promise<InventorySnapshot> {
         issuable: b?.issuable === true,
         receivedByName: s(r.received_by_name),
         receivedAt: s(r.received_at),
+        decidedByName: s(r.decided_by_name),
+        decidedAt: r.decided_at ? s(r.decided_at) : null,
+        decisionNote: s(r.decision_note),
+        pricedAt: r.priced_at ? s(r.priced_at) : null,
       };
     }),
     moves: (movesQ.data ?? []).map((r) => ({

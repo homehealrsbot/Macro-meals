@@ -30,6 +30,22 @@ export function pct(v: number | null | undefined, digits = 1): string {
   return `${num(v * 100, digits)}%`;
 }
 
+// وقت الرياض ثابتاً على الخادم والمتصفّح: لو تُرك للمنطقة المحلية اختلف ما
+// يُرسم أول مرة عمّا يُرسم بعد الترطيب، وقرأ من في المطبخ ساعة غرينتش.
+const STAMP_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Riyadh",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hour12: false,
+});
+export function stamp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const p: Record<string, string> = {};
+  for (const x of STAMP_FMT.formatToParts(d)) p[x.type] = x.value;
+  return `${p.year}-${p.month}-${p.day} · ${p.hour}:${p.minute}`;
+}
+
 export function OpsShell({
   title,
   subtitle,
@@ -303,16 +319,31 @@ export function NumInput({
 /** نص واحد يشرح أي حقل أو زر مقفول — عشان ما يختلف من شاشة لشاشة. */
 export const LOCKED_FIELD_TITLE = "عرض فقط — هذا من صلاحية قسم ثاني";
 
-export function Th({ children, className = "" }: { children?: ReactNode; className?: string }) {
+/**
+ * محاذاة العمود. تُمرَّر بـ`align` لا بكلاس في className، لأن ترتيب كلاسات
+ * Tailwind في الملف هو الحاكم لا ترتيبها في السطر: `text-right` كان مكتوباً
+ * في أساس الرأس فيغلب `text-center` الممرَّر، فيقف الرأس يميناً وأرقامه في
+ * الوسط — وهذا اللي كان يخرّب الجداول.
+ *
+ * و«num» يعني عمود أرقام: الرأس وخلاياه على الحافة نفسها، والأرقام بعرض
+ * ثابت (tnum)، فتقف خانة الآحاد تحت خانة الآحاد مهما اختلفت الأطوال.
+ * ووحدة القياس تُكتب في الرأس لا في كل خليّة — «المتاح (غ)» لا «24,000 غ» —
+ * حتى يبقى عمود الأرقام أرقاماً خالصة.
+ */
+export type Align = "start" | "center" | "num";
+const TH_ALIGN: Record<Align, string> = { start: "text-right", center: "text-center", num: "text-right" };
+const TD_ALIGN: Record<Align, string> = { start: "text-right", center: "text-center", num: "text-right num" };
+
+export function Th({ children, className = "", align = "start" }: { children?: ReactNode; className?: string; align?: Align }) {
   return (
-    <th className={`text-right text-[11px] font-bold px-2.5 py-2 whitespace-nowrap ${className}`} style={{ color: T.inkSoft }}>
+    <th className={`${TH_ALIGN[align]} text-[11px] font-bold px-2.5 py-2 whitespace-nowrap ${className}`} style={{ color: T.inkSoft }}>
       {children}
     </th>
   );
 }
-export function Td({ children, className = "", strong }: { children?: ReactNode; className?: string; strong?: boolean }) {
+export function Td({ children, className = "", strong, align }: { children?: ReactNode; className?: string; strong?: boolean; align?: Align }) {
   return (
-    <td className={`px-2.5 py-2 text-xs align-middle ${strong ? "font-bold" : ""} ${className}`}>{children}</td>
+    <td className={`${align ? TD_ALIGN[align] : ""} px-2.5 py-2 text-xs align-middle ${strong ? "font-bold" : ""} ${className}`}>{children}</td>
   );
 }
 

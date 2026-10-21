@@ -66,7 +66,7 @@ export default function SettingsPage() {
             <thead>
               <tr>
                 <Th>المكوّن</Th>
-                {LEVELS.map((l) => <Th key={l.key} className="text-center">{l.label}</Th>)}
+                {LEVELS.map((l) => <Th key={l.key} align="center">{l.label}</Th>)}
               </tr>
             </thead>
             <tbody>
@@ -102,9 +102,9 @@ export default function SettingsPage() {
             <thead>
               <tr>
                 <Th>القسم</Th>
-                <Th className="text-center">تغليف/طبق (ر.س)</Th>
-                <Th className="text-center">نسبة التكلفة المستهدفة %</Th>
-                <Th className="text-center">عمالة/طبق (ر.س)</Th>
+                <Th align="center">تغليف/طبق (ر.س)</Th>
+                <Th align="center">نسبة التكلفة المستهدفة %</Th>
+                <Th align="center">عمالة/طبق (ر.س)</Th>
               </tr>
             </thead>
             <tbody>
