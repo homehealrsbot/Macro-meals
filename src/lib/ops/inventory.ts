@@ -79,7 +79,6 @@ export interface LotRow {
   decidedByName: string;
   decidedAt: string | null;
   decisionNote: string;
-  pricedAt: string | null;
 }
 
 export interface MoveRow {

@@ -77,7 +77,6 @@ export async function loadInventory(): Promise<InventorySnapshot> {
         decidedByName: s(r.decided_by_name),
         decidedAt: r.decided_at ? s(r.decided_at) : null,
         decisionNote: s(r.decision_note),
-        pricedAt: r.priced_at ? s(r.priced_at) : null,
       };
     }),
     moves: (movesQ.data ?? []).map((r) => ({
